@@ -1,0 +1,51 @@
+{
+    "name": "kunpocc-event",
+    "version": "0.0.2",
+    "description": "kunpocc-event",
+    "main": "./dist/kunpocc-event.min.cjs",
+    "module": "./dist/kunpocc-event.min.mjs",
+    "types": "./dist/kunpocc-event.d.ts",
+    "exports": {
+        ".": {
+            "require": "./dist/kunpocc-event.cjs",
+            "import": "./dist/kunpocc-event.mjs",
+            "types": "./dist/kunpocc-event.d.ts",
+            "default": "./dist/kunpocc-event.cjs"
+        },
+        "./min": {
+            "require": "./dist/kunpocc-event.min.cjs",
+            "import": "./dist/kunpocc-event.min.mjs"
+        }
+    },
+    "scripts": {
+        "clean": "rm -rf dist",
+        "build": "npm run clean && rollup -c rollup.config.mjs"
+    },
+    "files": [
+        "dist/kunpocc-event.cjs",
+        "dist/kunpocc-event.mjs",
+        "dist/kunpocc-event.min.cjs",
+        "dist/kunpocc-event.min.mjs",
+        "dist/kunpocc-event.d.ts",
+        "CHANGELOG.md"
+    ],
+    "author": "gongxh",
+    "license": "ISC",
+    "repository": {
+        "type": "github",
+        "url": "https://github.com/Gongxh0901/kunpocc-event"
+    },
+    "publishConfig": {
+        "registry": "https://registry.npmjs.org/"
+    },
+    "devDependencies": {
+        "@rollup/plugin-terser": "^0.4.4",
+        "@rollup/plugin-typescript": "^12.1.2",
+        "@types/lodash": "^4.17.13",
+        "@types/node": "^22.10.2",
+        "rollup": "^4.28.1",
+        "rollup-plugin-dts": "^6.1.1",
+        "ts-node": "^10.9.2",
+        "tslib": "^2.6.2"
+    }
+}
