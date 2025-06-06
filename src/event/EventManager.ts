@@ -46,7 +46,14 @@ export class EventManager {
      */
     private commandManager: CommandManager = new CommandManager();
 
+    /**
+     * @internal
+     */
     private needRemoveIds: number[] = [];
+
+    /**
+     * @internal
+     */
     private triggerList: Event[] = [];
 
     /**
