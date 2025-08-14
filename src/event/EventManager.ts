@@ -1,20 +1,37 @@
 /**
  * @Author: Gongxh
  * @Date: 2024-12-21
- * @Description: 
+ * @Description: 改进版事件管理器 - 支持递归保护
  */
 
 import { CommandManager, CommandType } from "./Command";
 import { Event } from "./Event";
 import { EventFactory } from "./EventFactory";
 
+/**
+ * 最大递归深度常量
+ */
+const MAX_RECURSION_DEPTH = 20;
+
+/**
+ * 改进版事件管理器 - 防止递归调用栈溢出
+ * 
+ * 功能特性：
+ * - 递归深度限制防止栈溢出
+ * - 完全向后兼容现有API
+ */
 export class EventManager {
     /** 
      * 发送事件是否正在执行中
-     * 执行中不允许添加和移除事件
      * @internal
      */
     private isSending: boolean = false;
+
+    /** 
+     * 当前递归发送深度
+     * @internal
+     */
+    private sending_depth: number = 0;
 
     /** 
      * 注册的所有事件 事件ID -> 事件
@@ -47,22 +64,22 @@ export class EventManager {
     private commandManager: CommandManager = new CommandManager();
 
     /**
+     * 待移除事件ID列表
      * @internal
      */
     private needRemoveIds: number[] = [];
 
     /**
+     * 触发事件列表
      * @internal
      */
     private triggerList: Event[] = [];
 
     /**
-     * 添加事件监听器。
-     * @param name - 事件名称。
-     * @param callback - 回调函数，当事件触发时执行。
-     * @param target - 可选参数，指定事件监听的目标对象。
-     * 该方法将事件和回调函数注册到事件管理器中，以便在事件触发时执行相应的回调函数。
-     * 
+     * 添加事件监听器
+     * @param name - 事件名称
+     * @param callback - 回调函数，当事件触发时执行
+     * @param target - 可选参数，指定事件监听的目标对象
      * @returns 返回事件ID，可用于移除事件
      */
     public add(name: string, callback: (...args: any[]) => void, target?: any): number {
@@ -82,16 +99,15 @@ export class EventManager {
             this.commandManager.addEvent(event);
             return event.id;
         }
-        this.addEvent(event);
+        this._addEvent(event);
         return event.id;
     }
 
     /**
-     * 添加一个只触发一次的事件监听器。
-     * @param name - 事件名称。
-     * @param callback - 事件触发时要执行的回调函数。
-     * @param target - 可选参数，指定事件监听器的目标对象。
-     * 
+     * 添加一个只触发一次的事件监听器
+     * @param name - 事件名称
+     * @param callback - 事件触发时要执行的回调函数
+     * @param target - 可选参数，指定事件监听器的目标对象
      * @returns 返回事件ID，可用于移除事件
      */
     public addOnce(name: string, callback: (...args: any[]) => void, target?: any): number {
@@ -111,21 +127,16 @@ export class EventManager {
             this.commandManager.addEvent(event);
             return event.id;
         }
-        this.addEvent(event);
+        this._addEvent(event);
         return event.id;
     }
 
     /** 
-     * 添加事件 内部方法
-     * @param name 事件名称
-     * @param callback 回调函数
-     * @param once 是否只触发一次
-     * @param target 目标对象
-     * @returns 返回事件ID，可用于移除事件
-     * 
+     * 添加事件内部方法
+     * @param event 事件对象
      * @internal
      */
-    private addEvent(event: Event): void {
+    private _addEvent(event: Event): void {
         this.events.set(event.id, event);
 
         if (!this.nameToIds.has(event.name)) {
@@ -145,44 +156,61 @@ export class EventManager {
     }
 
     /**
-     * 发送事件给所有注册的监听器。
-     * @param name - 事件名称。
-     * @param target - 可选参数，指定目标对象，只有目标对象匹配时才会触发监听器。 (制定目标对象 效率更高)
-     * @param args - 传递给监听器回调函数的参数。
+     * 发送事件给所有注册的监听器（带递归保护）
+     * @param name - 事件名称
+     * @param target - 可选参数，指定目标对象，只有目标对象匹配时才会触发监听器
+     * @param args - 传递给监听器回调函数的参数
      */
     public send(name: string, target?: any, ...args: any[]): void {
+        // 递归深度保护：阻止超过限制的执行并报告错误
+        if (this.sending_depth >= MAX_RECURSION_DEPTH) {
+            console.error(`[EventManager] 递归深度超出限制！`);
+            console.error(`  事件名称: "${name}"`);
+            console.error(`  当前深度: ${this.sending_depth}`);
+            console.error(`  最大深度: ${MAX_RECURSION_DEPTH}`);
+            console.error(`  为防止栈溢出，事件执行已被阻止`);
+            return;
+        }
+
         if (!this.nameToIds.has(name)) {
             return;
         }
         const eventIds = this.nameToIds.get(name);
-        if (eventIds.size == 0) {
+        if (eventIds.size === 0) {
             return;
         }
 
+        // 增加递归深度
+        this.sending_depth++;
         this.isSending = true;
         this.needRemoveIds.length = 0;
         this.triggerList.length = 0;
 
+        // 构建触发列表
         for (const eventId of eventIds.values()) {
             if (!this.events.has(eventId)) {
                 this.needRemoveIds.push(eventId);
                 continue;
             }
             let event = this.events.get(eventId);
-            if (!target || target == event.target) {
+            if (!target || target === event.target) {
                 this.triggerList.push(event);
                 if (event.once) {
                     this.needRemoveIds.push(eventId);
                 }
             }
         }
-        // 真正触发事件
+
+        // 同步触发事件
         for (const event of this.triggerList) {
             event.callback(...args);
         }
+
+        // 减少递归深度
+        this.sending_depth--;
         this.isSending = false;
 
-        // 移除事件
+        // 清理工作
         if (this.needRemoveIds.length > 0) {
             for (const id of this.needRemoveIds) {
                 this.remove(id);
@@ -193,7 +221,7 @@ export class EventManager {
         this.commandManager.forEach(command => {
             switch (command.type) {
                 case CommandType.Add:
-                    this.addEvent(command.event);
+                    this._addEvent(command.event);
                     break;
                 case CommandType.RemoveById:
                     this.remove(command.eventId);
@@ -250,7 +278,7 @@ export class EventManager {
             return;
         }
         let eventIds = this.nameToIds.get(name);
-        if (eventIds.size == 0) {
+        if (eventIds.size === 0) {
             return;
         }
 
@@ -280,7 +308,7 @@ export class EventManager {
             return;
         }
         let eventIds = this.targetToIds.get(target);
-        if (eventIds.size == 0) {
+        if (eventIds.size === 0) {
             return;
         }
         if (this.isSending) {
@@ -298,7 +326,7 @@ export class EventManager {
                 this.factory.recycle(event);
             }
         });
-        this.targetToIds.delete(target)
+        this.targetToIds.delete(target);
     }
 
     /**
@@ -312,7 +340,7 @@ export class EventManager {
         }
         let nameIds = this.nameToIds.get(name);
         let targetIds = this.targetToIds.get(target);
-        if (nameIds.size == 0 || targetIds.size == 0) {
+        if (nameIds.size === 0 || targetIds.size === 0) {
             return;
         }
         if (this.isSending) {
@@ -324,14 +352,14 @@ export class EventManager {
         if (nameIds.size < targetIds.size) {
             nameIds.forEach(eventId => {
                 let event = this.events.get(eventId);
-                if (event.target == target) {
+                if (event.target === target) {
                     this.needRemoveIds.push(eventId);
                 }
             });
         } else {
             targetIds.forEach(eventId => {
                 let event = this.events.get(eventId);
-                if (event.name == name) {
+                if (event.name === name) {
                     this.needRemoveIds.push(eventId);
                 }
             });
@@ -359,5 +387,8 @@ export class EventManager {
         this.nameToIds.clear();
         this.targetToIds.clear();
         this.commandManager.clear();
+
+        // 清理递归保护相关状态
+        this.sending_depth = 0;
     }
 }
