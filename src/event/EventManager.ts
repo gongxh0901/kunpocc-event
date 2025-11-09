@@ -22,13 +22,8 @@ const MAX_RECURSION_DEPTH = 20;
  */
 export class EventManager {
     /** 
-     * 发送事件是否正在执行中
-     * @internal
-     */
-    private isSending: boolean = false;
-
-    /** 
      * 当前递归发送深度
+     * 0 表示没有在发送，> 0 表示正在发送事件
      * @internal
      */
     private sending_depth: number = 0;
@@ -64,18 +59,6 @@ export class EventManager {
     private commandManager: CommandManager = new CommandManager();
 
     /**
-     * 待移除事件ID列表
-     * @internal
-     */
-    private needRemoveIds: number[] = [];
-
-    /**
-     * 触发事件列表
-     * @internal
-     */
-    private triggerList: Event[] = [];
-
-    /**
      * 添加事件监听器
      * @param name - 事件名称
      * @param callback - 回调函数，当事件触发时执行
@@ -95,7 +78,7 @@ export class EventManager {
         event.target = target;
         event.once = false;
 
-        if (this.isSending) {
+        if (this.sending_depth > 0) {
             this.commandManager.addEvent(event);
             return event.id;
         }
@@ -123,7 +106,7 @@ export class EventManager {
         event.target = target;
         event.once = true;
 
-        if (this.isSending) {
+        if (this.sending_depth > 0) {
             this.commandManager.addEvent(event);
             return event.id;
         }
@@ -180,66 +163,69 @@ export class EventManager {
             return;
         }
 
+        // 使用局部变量，避免嵌套调用时互相污染
+        const needRemoveIds: number[] = [];
+        const triggerList: Event[] = [];
+
         // 增加递归深度
         this.sending_depth++;
-        this.isSending = true;
-        this.needRemoveIds.length = 0;
-        this.triggerList.length = 0;
 
         // 构建触发列表
         for (const eventId of eventIds.values()) {
             if (!this.events.has(eventId)) {
-                this.needRemoveIds.push(eventId);
+                needRemoveIds.push(eventId);
                 continue;
             }
             let event = this.events.get(eventId);
             if (!target || target === event.target) {
-                this.triggerList.push(event);
+                triggerList.push(event);
                 if (event.once) {
-                    this.needRemoveIds.push(eventId);
+                    needRemoveIds.push(eventId);
                 }
             }
         }
 
         // 同步触发事件
-        for (const event of this.triggerList) {
+        for (const event of triggerList) {
             event.callback(...args);
         }
 
         // 减少递归深度
         this.sending_depth--;
-        this.isSending = false;
 
-        // 清理工作
-        if (this.needRemoveIds.length > 0) {
-            for (const id of this.needRemoveIds) {
-                this.remove(id);
+        // 只在最外层执行清理工作
+        if (this.sending_depth === 0) {
+            // 清理 once 事件
+            if (needRemoveIds.length > 0) {
+                for (const id of needRemoveIds) {
+                    this.remove(id);
+                }
             }
-            this.needRemoveIds.length = 0;
+
+            // 处理命令队列
+            this.commandManager.forEach(command => {
+                switch (command.type) {
+                    case CommandType.Add:
+                        this._addEvent(command.event);
+                        break;
+                    case CommandType.RemoveById:
+                        this.remove(command.eventId);
+                        break;
+                    case CommandType.RemoveByName:
+                        this.removeByName(command.name);
+                        break;
+                    case CommandType.RemoveByTarget:
+                        this.removeByTarget(command.target);
+                        break;
+                    case CommandType.RemoveByNameAndTarget:
+                        this.removeByNameAndTarget(command.name, command.target);
+                        break;
+                    case CommandType.ClearAll:
+                        this.clearAll();
+                        break;
+                }
+            });
         }
-
-        this.commandManager.forEach(command => {
-            switch (command.type) {
-                case CommandType.Add:
-                    this._addEvent(command.event);
-                    break;
-                case CommandType.RemoveById:
-                    this.remove(command.eventId);
-                    break;
-                case CommandType.RemoveByName:
-                    this.removeByName(command.name);
-                    break;
-                case CommandType.RemoveByTarget:
-                    this.removeByTarget(command.target);
-                    break;
-                case CommandType.RemoveByNameAndTarget:
-                    this.removeByNameAndTarget(command.name, command.target);
-                    break;
-                case CommandType.ClearAll:
-                    this.clearAll();
-                    break;
-            }
-        });
     }
 
     /** 
@@ -250,7 +236,7 @@ export class EventManager {
         if (!this.events.has(eventId)) {
             return;
         }
-        if (this.isSending) {
+        if (this.sending_depth > 0) {
             this.commandManager.add(CommandType.RemoveById, eventId, null, null);
             return;
         }
@@ -282,7 +268,7 @@ export class EventManager {
             return;
         }
 
-        if (this.isSending) {
+        if (this.sending_depth > 0) {
             this.commandManager.add(CommandType.RemoveByName, null, name, null);
             return;
         }
@@ -311,7 +297,7 @@ export class EventManager {
         if (eventIds.size === 0) {
             return;
         }
-        if (this.isSending) {
+        if (this.sending_depth > 0) {
             this.commandManager.add(CommandType.RemoveByTarget, null, null, target);
             return;
         }
@@ -340,35 +326,36 @@ export class EventManager {
         }
         let nameIds = this.nameToIds.get(name);
         let targetIds = this.targetToIds.get(target);
-        if (nameIds.size === 0 || targetIds.size === 0) {
+        // 检查targetIds是否存在，避免NPE
+        if (nameIds.size === 0 || !targetIds || targetIds.size === 0) {
             return;
         }
-        if (this.isSending) {
+        if (this.sending_depth > 0) {
             this.commandManager.add(CommandType.RemoveByNameAndTarget, null, name, target);
             return;
         }
 
-        this.needRemoveIds.length = 0;
+        // 使用局部变量
+        const needRemoveIds: number[] = [];
         if (nameIds.size < targetIds.size) {
             nameIds.forEach(eventId => {
                 let event = this.events.get(eventId);
                 if (event.target === target) {
-                    this.needRemoveIds.push(eventId);
+                    needRemoveIds.push(eventId);
                 }
             });
         } else {
             targetIds.forEach(eventId => {
                 let event = this.events.get(eventId);
                 if (event.name === name) {
-                    this.needRemoveIds.push(eventId);
+                    needRemoveIds.push(eventId);
                 }
             });
         }
-        if (this.needRemoveIds.length > 0) {
-            for (const id of this.needRemoveIds) {
+        if (needRemoveIds.length > 0) {
+            for (const id of needRemoveIds) {
                 this.remove(id);
             }
-            this.needRemoveIds.length = 0;
         }
     }
 
@@ -376,7 +363,7 @@ export class EventManager {
      * 清空所有注册的事件
      */
     public clearAll(): void {
-        if (this.isSending) {
+        if (this.sending_depth > 0) {
             this.commandManager.add(CommandType.ClearAll, null, null, null);
             return;
         }

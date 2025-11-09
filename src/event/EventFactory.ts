@@ -25,6 +25,8 @@ export class EventFactory {
             return ret;
         }
         const ret = this._stack.pop() as T;
+        // 分配新ID，避免ID重用导致误删
+        ret.id = ++this._id;
         return ret;
     }
 
