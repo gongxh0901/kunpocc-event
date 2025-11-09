@@ -1,6 +1,6 @@
 {
     "name": "kunpocc-event",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "description": "kunpocc-event",
     "main": "./dist/kunpocc-event.min.cjs",
     "module": "./dist/kunpocc-event.min.mjs",
